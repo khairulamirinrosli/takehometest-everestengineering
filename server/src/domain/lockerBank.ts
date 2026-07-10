@@ -4,6 +4,8 @@ import { randomId } from "./id.js";
 import type { LockerView } from "./locker.js";
 import type { Package } from "./package.js";
 import { generatePickupCode } from "./pickupCode.js";
+import type { PricingConfig } from "./pricing.js";
+import { DEFAULT_PRICING, billedDays, calculateStorageFee } from "./pricing.js";
 import type { Size } from "./size.js";
 import type { LockerRepository } from "../repository/lockerRepository.js";
 
@@ -12,7 +14,7 @@ export type StoreResult =
   | { status: "no_locker_available" };
 
 export type RetrieveResult =
-  | { status: "retrieved"; package: Package }
+  | { status: "retrieved"; package: Package; daysStored: number; feeCharged: number }
   | { status: "locker_not_found" }
   | { status: "locker_empty" }
   | { status: "invalid_code" };
@@ -24,6 +26,7 @@ export interface LockerBankOptions {
   lockerIdGenerator?: IdGenerator;
   /** Id generator for packages. Not user-facing, so random UUIDs are fine as-is. */
   packageIdGenerator?: IdGenerator;
+  pricing?: PricingConfig;
 }
 
 /**
@@ -36,12 +39,14 @@ export class LockerBank {
   private readonly clock: Clock;
   private readonly generateLockerId: IdGenerator;
   private readonly generatePackageId: IdGenerator;
+  private readonly pricing: PricingConfig;
 
   constructor(options: LockerBankOptions) {
     this.repository = options.repository;
     this.clock = options.clock ?? { now: () => new Date() };
     this.generateLockerId = options.lockerIdGenerator ?? randomId;
     this.generatePackageId = options.packageIdGenerator ?? randomId;
+    this.pricing = options.pricing ?? DEFAULT_PRICING;
   }
 
   createLocker(size: Size): LockerView {
@@ -88,8 +93,11 @@ export class LockerBank {
     }
 
     const retrievedAt = this.clock.now();
+    const daysStored = billedDays(pkg.storedAt, retrievedAt);
+    const feeCharged = calculateStorageFee(daysStored, this.pricing);
+
     this.repository.release(lockerId, retrievedAt);
-    return { status: "retrieved", package: pkg };
+    return { status: "retrieved", package: pkg, daysStored, feeCharged };
   }
 
   private generateUniquePickupCode(): string {

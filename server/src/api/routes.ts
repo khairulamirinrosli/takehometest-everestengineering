@@ -52,6 +52,8 @@ export function createLockerRoutes(bank: LockerBank): Router {
           lockerId,
           packageId: result.package.id,
           size: result.package.size,
+          daysStored: result.daysStored,
+          feeCharged: result.feeCharged,
         });
         return;
       case "locker_not_found":

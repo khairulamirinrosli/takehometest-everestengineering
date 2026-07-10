@@ -4,6 +4,7 @@ import type { Express } from "express";
 import { createServer } from "./server.js";
 import { LockerBank } from "../domain/lockerBank.js";
 import { InMemoryLockerRepository } from "../repository/lockerRepository.js";
+import { FakeClock } from "../testUtils/fakeClock.js";
 
 describe("locker and package routes", () => {
   let app: Express;
@@ -194,5 +195,31 @@ describe("locker and package routes", () => {
 
       expect(res.status).toBe(404);
     });
+  });
+});
+
+describe("storage fee (Level 3)", () => {
+  it("returns the days stored and fee charged based on elapsed time", async () => {
+    const clock = new FakeClock(new Date("2026-01-01T00:00:00Z"));
+    const bank = new LockerBank({
+      repository: new InMemoryLockerRepository(),
+      clock,
+      pricing: { ratePerDay: 10 },
+    });
+    const app = createServer(bank);
+
+    const lockerRes = await request(app).post("/lockers").send({ size: "SMALL" });
+    const storeRes = await request(app).post("/packages").send({ size: "SMALL" });
+
+    clock.advanceHours(24 * 6); // exactly 6 days
+
+    const res = await request(app)
+      .post("/pickups")
+      .send({ lockerId: lockerRes.body.id, pickupCode: storeRes.body.pickupCode });
+
+    expect(res.status).toBe(200);
+    expect(res.body.daysStored).toBe(6);
+    // 5 days @ 10 + 1 day @ 20
+    expect(res.body.feeCharged).toBe(70);
   });
 });

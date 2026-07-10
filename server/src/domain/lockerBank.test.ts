@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LockerBank } from "./lockerBank.js";
 import { InMemoryLockerRepository } from "../repository/lockerRepository.js";
+import { FakeClock } from "../testUtils/fakeClock.js";
 
 describe("LockerBank", () => {
   let repository: InMemoryLockerRepository;
@@ -148,6 +149,53 @@ describe("LockerBank", () => {
 
       const view = bank.listLockers().find((l) => l.id === locker.id);
       expect(view?.available).toBe(false);
+    });
+
+    it("charges a fee based on how long the package sat in the locker", async () => {
+      const clock = new FakeClock(new Date("2026-01-01T00:00:00Z"));
+      const timedRepository = new InMemoryLockerRepository();
+      const timedBank = new LockerBank({
+        repository: timedRepository,
+        clock,
+        pricing: { ratePerDay: 10 },
+      });
+
+      const locker = timedBank.createLocker("SMALL");
+      const stored = await timedBank.storePackage("SMALL");
+      if (stored.status !== "stored") throw new Error("setup failed");
+
+      clock.advanceHours(6 * 24 + 1); // day 6 partial -> 7 billed days
+
+      const result = await timedBank.retrievePackage(locker.id, stored.pickupCode);
+
+      expect(result.status).toBe("retrieved");
+      if (result.status === "retrieved") {
+        expect(result.daysStored).toBe(7);
+        // 5 days @ 10 + 2 days @ 20 = 90
+        expect(result.feeCharged).toBe(90);
+      }
+    });
+
+    it("charges the minimum 1-day fee for an immediate pickup", async () => {
+      const clock = new FakeClock(new Date("2026-01-01T00:00:00Z"));
+      const timedRepository = new InMemoryLockerRepository();
+      const timedBank = new LockerBank({
+        repository: timedRepository,
+        clock,
+        pricing: { ratePerDay: 10 },
+      });
+
+      const locker = timedBank.createLocker("SMALL");
+      const stored = await timedBank.storePackage("SMALL");
+      if (stored.status !== "stored") throw new Error("setup failed");
+
+      const result = await timedBank.retrievePackage(locker.id, stored.pickupCode);
+
+      expect(result.status).toBe("retrieved");
+      if (result.status === "retrieved") {
+        expect(result.daysStored).toBe(1);
+        expect(result.feeCharged).toBe(10);
+      }
     });
   });
 });
