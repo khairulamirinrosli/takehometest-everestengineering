@@ -2,6 +2,7 @@ import type { Clock } from "./clock.js";
 import type { IdGenerator } from "./id.js";
 import { randomId } from "./id.js";
 import type { LockerView } from "./locker.js";
+import { Mutex } from "./mutex.js";
 import type { Package } from "./package.js";
 import { generatePickupCode } from "./pickupCode.js";
 import type { PricingConfig } from "./pricing.js";
@@ -40,6 +41,7 @@ export class LockerBank {
   private readonly generateLockerId: IdGenerator;
   private readonly generatePackageId: IdGenerator;
   private readonly pricing: PricingConfig;
+  private readonly allocationLock = new Mutex();
 
   constructor(options: LockerBankOptions) {
     this.repository = options.repository;
@@ -59,22 +61,27 @@ export class LockerBank {
   }
 
   async storePackage(size: Size): Promise<StoreResult> {
-    const candidates = this.repository.findAvailableLockers(size);
-    const locker = candidates[0];
-    if (!locker) {
-      return { status: "no_locker_available" };
-    }
+    // Finding an available locker and assigning it must be atomic: with
+    // concurrent requests racing for a limited pool of lockers, two calls
+    // must never both see the same locker as available and both claim it.
+    return this.allocationLock.runExclusive(() => {
+      const candidates = this.repository.findAvailableLockers(size);
+      const locker = candidates[0];
+      if (!locker) {
+        return { status: "no_locker_available" };
+      }
 
-    const pickupCode = this.generateUniquePickupCode();
-    this.repository.assign(locker.id, {
-      id: this.generatePackageId(),
-      size,
-      lockerId: locker.id,
-      pickupCode,
-      storedAt: this.clock.now(),
+      const pickupCode = this.generateUniquePickupCode();
+      this.repository.assign(locker.id, {
+        id: this.generatePackageId(),
+        size,
+        lockerId: locker.id,
+        pickupCode,
+        storedAt: this.clock.now(),
+      });
+
+      return { status: "stored", lockerId: locker.id, pickupCode };
     });
-
-    return { status: "stored", lockerId: locker.id, pickupCode };
   }
 
   async retrievePackage(lockerId: string, pickupCode: string): Promise<RetrieveResult> {
