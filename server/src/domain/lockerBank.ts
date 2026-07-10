@@ -2,6 +2,7 @@ import type { Clock } from "./clock.js";
 import type { IdGenerator } from "./id.js";
 import { randomId } from "./id.js";
 import type { LockerView } from "./locker.js";
+import type { Package } from "./package.js";
 import { generatePickupCode } from "./pickupCode.js";
 import type { Size } from "./size.js";
 import type { LockerRepository } from "../repository/lockerRepository.js";
@@ -9,6 +10,12 @@ import type { LockerRepository } from "../repository/lockerRepository.js";
 export type StoreResult =
   | { status: "stored"; lockerId: string; pickupCode: string }
   | { status: "no_locker_available" };
+
+export type RetrieveResult =
+  | { status: "retrieved"; package: Package }
+  | { status: "locker_not_found" }
+  | { status: "locker_empty" }
+  | { status: "invalid_code" };
 
 export interface LockerBankOptions {
   repository: LockerRepository;
@@ -63,6 +70,26 @@ export class LockerBank {
     });
 
     return { status: "stored", lockerId: locker.id, pickupCode };
+  }
+
+  async retrievePackage(lockerId: string, pickupCode: string): Promise<RetrieveResult> {
+    const locker = this.repository.getLocker(lockerId);
+    if (!locker) {
+      return { status: "locker_not_found" };
+    }
+
+    const pkg = this.repository.getActivePackage(lockerId);
+    if (!pkg) {
+      return { status: "locker_empty" };
+    }
+
+    if (pkg.pickupCode !== pickupCode) {
+      return { status: "invalid_code" };
+    }
+
+    const retrievedAt = this.clock.now();
+    this.repository.release(lockerId, retrievedAt);
+    return { status: "retrieved", package: pkg };
   }
 
   private generateUniquePickupCode(): string {

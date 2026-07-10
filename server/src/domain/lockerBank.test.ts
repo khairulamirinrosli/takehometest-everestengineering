@@ -93,4 +93,61 @@ describe("LockerBank", () => {
       expect(spy).toHaveBeenCalledTimes(2);
     });
   });
+
+  describe("retrievePackage", () => {
+    it("retrieves the package with a matching locker id and pickup code", async () => {
+      const locker = bank.createLocker("SMALL");
+      const stored = await bank.storePackage("SMALL");
+      if (stored.status !== "stored") throw new Error("setup failed");
+
+      const result = await bank.retrievePackage(locker.id, stored.pickupCode);
+
+      expect(result.status).toBe("retrieved");
+      if (result.status === "retrieved") {
+        expect(result.package.lockerId).toBe(locker.id);
+        expect(result.package.pickupCode).toBe(stored.pickupCode);
+      }
+    });
+
+    it("frees the locker for future deliveries after retrieval", async () => {
+      const locker = bank.createLocker("SMALL");
+      const stored = await bank.storePackage("SMALL");
+      if (stored.status !== "stored") throw new Error("setup failed");
+
+      await bank.retrievePackage(locker.id, stored.pickupCode);
+
+      const view = bank.listLockers().find((l) => l.id === locker.id);
+      expect(view?.available).toBe(true);
+    });
+
+    it("returns locker_not_found for an unknown locker id", async () => {
+      const result = await bank.retrievePackage("does-not-exist", "ABC123");
+      expect(result).toEqual({ status: "locker_not_found" });
+    });
+
+    it("returns locker_empty when the locker has no active package", async () => {
+      const locker = bank.createLocker("SMALL");
+      const result = await bank.retrievePackage(locker.id, "ABC123");
+      expect(result).toEqual({ status: "locker_empty" });
+    });
+
+    it("returns invalid_code when the pickup code does not match", async () => {
+      const locker = bank.createLocker("SMALL");
+      await bank.storePackage("SMALL");
+
+      const result = await bank.retrievePackage(locker.id, "WRONGC");
+
+      expect(result).toEqual({ status: "invalid_code" });
+    });
+
+    it("does not release the locker on a failed retrieval attempt", async () => {
+      const locker = bank.createLocker("SMALL");
+      await bank.storePackage("SMALL");
+
+      await bank.retrievePackage(locker.id, "WRONGC");
+
+      const view = bank.listLockers().find((l) => l.id === locker.id);
+      expect(view?.available).toBe(false);
+    });
+  });
 });

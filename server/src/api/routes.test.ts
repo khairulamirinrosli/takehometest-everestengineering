@@ -65,6 +65,22 @@ describe("locker and package routes", () => {
       expect(view.storedAt).toEqual(expect.any(String));
       expect(new Date(view.storedAt).toString()).not.toBe("Invalid Date");
     });
+
+    it("includes lastRetrievedAt (and no pickupCode) once the package is retrieved", async () => {
+      const lockerRes = await request(app).post("/lockers").send({ size: "SMALL" });
+      const storeRes = await request(app).post("/packages").send({ size: "SMALL" });
+      await request(app)
+        .post("/pickups")
+        .send({ lockerId: lockerRes.body.id, pickupCode: storeRes.body.pickupCode });
+
+      const res = await request(app).get("/lockers");
+
+      const view = res.body.find((l: { id: string }) => l.id === lockerRes.body.id);
+      expect(view.available).toBe(true);
+      expect(view.pickupCode).toBeUndefined();
+      expect(view.storedAt).toBeUndefined();
+      expect(new Date(view.lastRetrievedAt).toString()).not.toBe("Invalid Date");
+    });
   });
 
   describe("POST /packages", () => {
@@ -110,6 +126,73 @@ describe("locker and package routes", () => {
 
       const stored = listRes.body.find((l: { id: string }) => l.id === lockerRes.body.id);
       expect(stored.available).toBe(false);
+    });
+  });
+
+  describe("POST /pickups", () => {
+    async function storeAPackage(size: "SMALL" | "MEDIUM" | "LARGE" = "SMALL") {
+      const lockerRes = await request(app).post("/lockers").send({ size });
+      const storeRes = await request(app).post("/packages").send({ size });
+      return { lockerId: lockerRes.body.id as string, pickupCode: storeRes.body.pickupCode as string };
+    }
+
+    it("retrieves a package with the correct locker id and pickup code", async () => {
+      const { lockerId, pickupCode } = await storeAPackage();
+
+      const res = await request(app).post("/pickups").send({ lockerId, pickupCode });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ lockerId, size: "SMALL" });
+    });
+
+    it("frees the locker so it can be used again", async () => {
+      const { lockerId, pickupCode } = await storeAPackage();
+      await request(app).post("/pickups").send({ lockerId, pickupCode });
+
+      const listRes = await request(app).get("/lockers");
+
+      const locker = listRes.body.find((l: { id: string }) => l.id === lockerId);
+      expect(locker.available).toBe(true);
+    });
+
+    it("rejects a request missing lockerId or pickupCode", async () => {
+      const res = await request(app).post("/pickups").send({ lockerId: "x" });
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 404 for an unknown locker id", async () => {
+      const res = await request(app).post("/pickups").send({ lockerId: "nope", pickupCode: "ABC123" });
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 404 when the locker has no package", async () => {
+      const lockerRes = await request(app).post("/lockers").send({ size: "SMALL" });
+
+      const res = await request(app)
+        .post("/pickups")
+        .send({ lockerId: lockerRes.body.id, pickupCode: "ABC123" });
+
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 400 for a wrong pickup code and keeps the locker occupied", async () => {
+      const { lockerId } = await storeAPackage();
+
+      const res = await request(app).post("/pickups").send({ lockerId, pickupCode: "WRONGC" });
+      expect(res.status).toBe(400);
+
+      const listRes = await request(app).get("/lockers");
+      const locker = listRes.body.find((l: { id: string }) => l.id === lockerId);
+      expect(locker.available).toBe(false);
+    });
+
+    it("rejects retrieving the same package twice", async () => {
+      const { lockerId, pickupCode } = await storeAPackage();
+      await request(app).post("/pickups").send({ lockerId, pickupCode });
+
+      const res = await request(app).post("/pickups").send({ lockerId, pickupCode });
+
+      expect(res.status).toBe(404);
     });
   });
 });

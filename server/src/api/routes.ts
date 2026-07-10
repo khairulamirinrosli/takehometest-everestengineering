@@ -37,5 +37,34 @@ export function createLockerRoutes(bank: LockerBank): Router {
     res.status(201).json({ lockerId: result.lockerId, pickupCode: result.pickupCode });
   });
 
+  router.post("/pickups", async (req, res) => {
+    const { lockerId, pickupCode } = req.body ?? {};
+    if (typeof lockerId !== "string" || !lockerId || typeof pickupCode !== "string" || !pickupCode) {
+      res.status(400).json({ error: "lockerId and pickupCode are required" });
+      return;
+    }
+
+    const result = await bank.retrievePackage(lockerId, pickupCode);
+
+    switch (result.status) {
+      case "retrieved":
+        res.status(200).json({
+          lockerId,
+          packageId: result.package.id,
+          size: result.package.size,
+        });
+        return;
+      case "locker_not_found":
+        res.status(404).json({ error: "No locker exists with that id." });
+        return;
+      case "locker_empty":
+        res.status(404).json({ error: "That locker has no package awaiting pickup." });
+        return;
+      case "invalid_code":
+        res.status(400).json({ error: "Pickup code does not match this locker." });
+        return;
+    }
+  });
+
   return router;
 }
